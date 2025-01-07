@@ -1,11 +1,11 @@
-import { CancelableRequest, Response } from 'got';
+import { Response } from 'got';
 import { Stream } from 'stream';
 import { getContentType } from '../utils/misc';
 import { RequestHeaders } from './base';
 
 export class HttpRequest {
     public isCancelled: boolean;
-    private _underlyingRequest: CancelableRequest<Response<Buffer>>;
+    private _underlyingRequest: Promise<Response<Buffer>>;
     public constructor(
         public method: string,
         public url: string,
@@ -13,21 +13,21 @@ export class HttpRequest {
         public body?: string | Stream,
         public rawBody?: string,
         public name?: string) {
-            this.method = method.toLocaleUpperCase();
-            this.isCancelled = false;
+        this.method = method.toLocaleUpperCase();
+        this.isCancelled = false;
     }
 
     public get contentType(): string | undefined {
         return getContentType(this.headers);
     }
 
-    public setUnderlyingRequest(request: CancelableRequest<Response<Buffer>>): void {
+    public setUnderlyingRequest(request: Promise<Response<Buffer>>): void {
         this._underlyingRequest = request;
     }
 
     public cancel(): void {
         if (!this.isCancelled) {
-            this._underlyingRequest?.cancel();
+            this.cancel();
             this.isCancelled = true;
         }
     }

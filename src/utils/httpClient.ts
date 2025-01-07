@@ -4,6 +4,7 @@ import * as path from 'path';
 import { CookieJar, Store } from 'tough-cookie';
 import * as url from 'url';
 import { Uri, window } from 'vscode';
+import { ProxyAgent } from 'proxy-agent';
 import { RequestHeaders, ResponseHeaders } from '../models/base';
 import { IRestClientSettings, SystemSettings } from '../models/configurationSettings';
 import { HttpRequest } from '../models/httpRequest';
@@ -17,8 +18,7 @@ import { convertBufferToStream, convertStreamToBuffer } from './streamUtility';
 import { UserDataManager } from './userDataManager';
 import { getCurrentHttpFileName, getWorkspaceRootPath } from './workspaceUtility';
 
-import { CancelableRequest, Headers, Method, OptionsOfBufferResponseBody, Response } from 'got';
-import got = require('got');
+import got, { Response } from 'got';
 
 const encodeUrl = require('encodeurl');
 const CookieFileStore = require('tough-cookie-file-store').FileCookieStore;
@@ -46,7 +46,7 @@ export class HttpClient {
         let bodySize = 0;
         let headersSize = 0;
         const requestUrl = encodeUrl(httpRequest.url);
-        const request: CancelableRequest<Response<Buffer>> = got.default(requestUrl, options);
+        const request: Promise<Response<Buffer>> = got(requestUrl, options);
         httpRequest.setUnderlyingRequest(request);
         (request as any).on('response', res => {
             if (res.rawHeaders) {
@@ -109,7 +109,7 @@ export class HttpClient {
         this.cookieStore = new CookieFileStore(UserDataManager.cookieFilePath) as Store;
     }
 
-    private async prepareOptions(httpRequest: HttpRequest, settings: IRestClientSettings): Promise<OptionsOfBufferResponseBody> {
+    private async prepareOptions(httpRequest: HttpRequest, settings: IRestClientSettings): Promise<any> {
         const originalRequestBody = httpRequest.body;
         let requestBody: string | Buffer | undefined;
         if (originalRequestBody) {
@@ -124,9 +124,9 @@ export class HttpClient {
         // Simply do a shadow copy here
         const clonedHeaders = Object.assign({}, httpRequest.headers);
 
-        const options: OptionsOfBufferResponseBody = {
+        const options: any = {
             headers: clonedHeaders as any as Headers,
-            method: httpRequest.method as any as Method,
+            method: httpRequest.method,
             body: requestBody,
             responseType: 'buffer',
             decompress: true,
@@ -169,7 +169,7 @@ export class HttpClient {
                     options.hooks!.beforeRequest!.push(awsSignature(authorization));
                 } else if (normalizedScheme === 'cognito') {
                     removeHeader(options.headers!, 'Authorization');
-                   options.hooks!.beforeRequest!.push(await awsCognito(authorization));
+                    options.hooks!.beforeRequest!.push(await awsCognito(authorization));
                 }
             } else if (normalizedScheme === 'basic' && user.includes(':')) {
                 removeHeader(options.headers!, 'Authorization');
@@ -184,21 +184,19 @@ export class HttpClient {
         Object.assign(options, certificate);
 
         // set proxy
-        if (settings.proxy && !HttpClient.ignoreProxy(httpRequest.url, settings.excludeHostsForProxy)) {
-            const proxyEndpoint = url.parse(settings.proxy);
-            if (/^https?:$/.test(proxyEndpoint.protocol || '')) {
-                const proxyOptions = {
-                    host: proxyEndpoint.hostname,
-                    port: Number(proxyEndpoint.port),
-                    rejectUnauthorized: settings.proxyStrictSSL
-                };
+        if (settings.proxy) {
+            process.env.http_proxy = settings.proxy;
+            process.env.https_proxy = settings.proxy;
+            process.env.HTTP_PROXY = settings.proxy;
+            process.env.HTTPS_PROXY = settings.proxy;
 
-                const ctor = (httpRequest.url.startsWith('http:')
-                    ? await import('http-proxy-agent')
-                    : await import('https-proxy-agent')).default;
-
-                options.agent = new ctor(proxyOptions);
+            const bypassList = HttpClient.buildProxyBypassList(settings.excludeHostsForProxy || [], settings.noProxy || []);
+            if (bypassList) {
+                process.env.no_proxy = bypassList
+                process.env.NO_PROXY = bypassList
             }
+
+            options.agent = new ProxyAgent();
         }
 
         return options;
@@ -224,17 +222,17 @@ export class HttpClient {
         return { cert, key, pfx, passphrase };
     }
 
-    private static ignoreProxy(requestUrl: string, excludeHostsForProxy: string[]): Boolean {
-        if (!excludeHostsForProxy || excludeHostsForProxy.length === 0) {
+    private static ignoreProxy(requestUrl: string, excludeHostsForProxy: string[], noProxy: string[] | undefined): Boolean {
+        const bypassArray = this.buildProxyBypassArray(excludeHostsForProxy, noProxy || []);
+        if (!bypassArray || bypassArray.length === 0) {
             return false;
         }
 
         const resolvedUrl = url.parse(requestUrl);
         const hostName = resolvedUrl.hostname?.toLowerCase();
         const port = resolvedUrl.port;
-        const excludeHostsProxyList = Array.from(new Set(excludeHostsForProxy.map(eh => eh.toLowerCase())));
 
-        for (const eh of excludeHostsProxyList) {
+        for (const eh of bypassArray) {
             const urlParts = eh.split(":");
             if (!port) {
                 // if no port specified in request url, host name must exactly match
@@ -251,6 +249,17 @@ export class HttpClient {
         }
 
         return false;
+    }
+
+    private static buildProxyBypassArray(excludeHostsForProxy: string[], noProxy: string[]): string[] {
+        const initialArray = [...excludeHostsForProxy, ...noProxy];
+        const bypassArray = Array.from(new Set(initialArray!.map(eh => eh.toLowerCase())));
+        return bypassArray;
+    }
+
+    private static buildProxyBypassList(excludeHostsForProxy: string[], noProxy: string[]): string {
+        const bypassArray = HttpClient.buildProxyBypassArray(excludeHostsForProxy, noProxy);
+        return bypassArray.join(',');
     }
 
     private resolveCertificate(absoluteOrRelativePath: string | undefined): Buffer | undefined {

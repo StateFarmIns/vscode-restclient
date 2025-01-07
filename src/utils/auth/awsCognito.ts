@@ -38,7 +38,7 @@ async function login(
 
 export async function awsCognito(
   authorization: string
-): Promise<BeforeRequestHook> {
+): Promise<BeforeRequestHook<any>> {
   const [, username, password, region, userPoolId, clientId] = authorization.split(/\s+/);
 
   const { accessToken } = await login(
