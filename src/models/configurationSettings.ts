@@ -22,6 +22,7 @@ export interface IRestClientSettings {
     readonly timeoutInMilliseconds: number;
     readonly showResponseInDifferentTab: boolean;
     readonly requestNameAsResponseTabTitle: boolean;
+    readonly noProxy?: string[];
     readonly proxy?: string;
     readonly proxyStrictSSL: boolean;
     readonly rememberCookiesForSubsequentRequests: boolean;
@@ -58,6 +59,7 @@ export class SystemSettings implements IRestClientSettings {
     private _timeoutInMilliseconds: number;
     private _showResponseInDifferentTab: boolean;
     private _requestNameAsResponseTabTitle: boolean;
+    private _noProxy?: string[];
     private _proxy?: string;
     private _proxyStrictSSL: boolean;
     private _rememberCookiesForSubsequentRequests: boolean;
@@ -105,6 +107,10 @@ export class SystemSettings implements IRestClientSettings {
 
     public get requestNameAsResponseTabTitle() {
         return this._requestNameAsResponseTabTitle;
+    }
+
+    public get noProxy() {
+        return this._noProxy;
     }
 
     public get proxy() {
@@ -258,9 +264,9 @@ export class SystemSettings implements IRestClientSettings {
         const restClientSettings = workspace.getConfiguration("rest-client", document?.uri);
         this._followRedirect = restClientSettings.get<boolean>("followredirect", true);
         this._defaultHeaders = restClientSettings.get<RequestHeaders>("defaultHeaders",
-                                                                     {
-                                                                         "User-Agent": "vscode-restclient"
-                                                                     });
+            {
+                "User-Agent": "vscode-restclient"
+            });
         this._showResponseInDifferentTab = restClientSettings.get<boolean>("showResponseInDifferentTab", false);
         this._requestNameAsResponseTabTitle = restClientSettings.get<boolean>("requestNameAsResponseTabTitle", false);
         this._rememberCookiesForSubsequentRequests = restClientSettings.get<boolean>("rememberCookiesForSubsequentRequests", true);
@@ -298,6 +304,7 @@ export class SystemSettings implements IRestClientSettings {
         languages.setLanguageConfiguration('http', { brackets: this._addRequestBodyLineIndentationAroundBrackets ? this.brackets : [] });
 
         const httpSettings = workspace.getConfiguration("http");
+        this._noProxy = httpSettings.get<string[]>('noProxy');
         this._proxy = httpSettings.get<string>('proxy');
         this._proxyStrictSSL = httpSettings.get<boolean>('proxyStrictSSL', false);
     }

@@ -2,6 +2,7 @@ import * as fs from 'fs-extra';
 import * as iconv from 'iconv-lite';
 import * as path from 'path';
 import { CookieJar, Store } from 'tough-cookie';
+import fetch, { Headers, Response } from 'node-fetch';
 import * as url from 'url';
 import { Uri, window } from 'vscode';
 import { RequestHeaders, ResponseHeaders } from '../models/base';
@@ -16,9 +17,7 @@ import { getHeader, removeHeader } from './misc';
 import { convertBufferToStream, convertStreamToBuffer } from './streamUtility';
 import { UserDataManager } from './userDataManager';
 import { getCurrentHttpFileName, getWorkspaceRootPath } from './workspaceUtility';
-
-import { CancelableRequest, Headers, Method, OptionsOfBufferResponseBody, Response } from 'got';
-import got = require('got');
+import { ProxyAgent } from 'proxy-agent';
 
 const encodeUrl = require('encodeurl');
 const CookieFileStore = require('tough-cookie-file-store').FileCookieStore;
@@ -30,6 +29,21 @@ type Certificate = {
     passphrase?: string;
 };
 
+type OptionsOfBufferResponseBody = {
+    headers?: Headers;
+    method: string;
+    agent?: ProxyAgent;
+    body: string | Buffer | undefined;
+    responseType: string;
+    decompress: boolean;
+    followRedirect: boolean;
+    throwHttpErrors: boolean;
+    retry: number;
+    timeout?: number;
+    username?: string;
+    password?: string;
+};
+
 export class HttpClient {
     private cookieStore: Store;
 
@@ -38,7 +52,7 @@ export class HttpClient {
         this.cookieStore = new CookieFileStore(cookieFilePath) as Store;
     }
 
-    public async send(httpRequest: HttpRequest, settings?: IRestClientSettings): Promise<HttpResponse> {
+    public async send(httpRequest: HttpRequest, settings?: IRestClientSettings): Promise<Response> {
         settings = settings || SystemSettings.Instance;
 
         const options = await this.prepareOptions(httpRequest, settings);
@@ -46,62 +60,67 @@ export class HttpClient {
         let bodySize = 0;
         let headersSize = 0;
         const requestUrl = encodeUrl(httpRequest.url);
-        const request: CancelableRequest<Response<Buffer>> = got.default(requestUrl, options);
-        httpRequest.setUnderlyingRequest(request);
-        (request as any).on('response', res => {
-            if (res.rawHeaders) {
-                headersSize += res.rawHeaders.map(h => h.length).reduce((a, b) => a + b, 0);
-                headersSize += (res.rawHeaders.length) / 2;
-            }
-            res.on('data', chunk => {
-                bodySize += chunk.length;
-            });
-        });
 
-        const response = await request;
+        // const request: CancelableRequest<Response<Buffer>> = got.default(requestUrl, options);
+        // httpRequest.setUnderlyingRequest(request);
+        // (request as any).on('response', res => {
+        //     if (res.rawHeaders) {
+        //         headersSize += res.rawHeaders.map(h => h.length).reduce((a, b) => a + b, 0);
+        //         headersSize += (res.rawHeaders.length) / 2;
+        //     }
+        //     res.on('data', chunk => {
+        //         bodySize += chunk.length;
+        //     });
+        // });
 
-        const contentType = response.headers['content-type'];
-        let encoding: string | undefined;
-        if (contentType) {
-            encoding = MimeUtility.parse(contentType).charset;
-        }
+        // const response = await request;
 
-        if (!encoding) {
-            encoding = "utf8";
-        }
+        const response = await fetch(requestUrl, options);
 
-        const bodyBuffer = response.body;
-        let bodyString = iconv.encodingExists(encoding) ? iconv.decode(bodyBuffer, encoding) : bodyBuffer.toString();
+        return response
 
-        if (settings.decodeEscapedUnicodeCharacters) {
-            bodyString = this.decodeEscapedUnicodeCharacters(bodyString);
-        }
+        // const contentType = response.headers['content-type'];
+        // let encoding: string | undefined;
+        // if (contentType) {
+        //     encoding = MimeUtility.parse(contentType).charset;
+        // }
 
-        // adjust response header case, due to the response headers in nodejs http module is in lowercase
-        const responseHeaders: ResponseHeaders = HttpClient.normalizeHeaderNames(response.headers, response.rawHeaders);
+        // if (!encoding) {
+        //     encoding = "utf8";
+        // }
 
-        const requestBody = options.body;
+        // const bodyBuffer = response.body;
+        // let bodyString = iconv.encodingExists(encoding) ? iconv.decode(bodyBuffer, encoding) : bodyBuffer.toString();
 
-        return new HttpResponse(
-            response.statusCode,
-            response.statusMessage!,
-            response.httpVersion,
-            responseHeaders,
-            bodyString,
-            bodySize,
-            headersSize,
-            bodyBuffer,
-            response.timings.phases,
-            new HttpRequest(
-                options.method!,
-                requestUrl,
-                HttpClient.normalizeHeaderNames(
-                    (response as any).request.options.headers as RequestHeaders,
-                    Object.keys(httpRequest.headers)),
-                Buffer.isBuffer(requestBody) ? convertBufferToStream(requestBody) : requestBody,
-                httpRequest.rawBody,
-                httpRequest.name
-            ));
+        // if (settings.decodeEscapedUnicodeCharacters) {
+        //     bodyString = this.decodeEscapedUnicodeCharacters(bodyString);
+        // }
+
+        // // adjust response header case, due to the response headers in nodejs http module is in lowercase
+        // const responseHeaders: ResponseHeaders = HttpClient.normalizeHeaderNames(response.headers, response.rawHeaders);
+
+        // const requestBody = options.body;
+
+        // return new HttpResponse(
+        //     response.status,
+        //     response.statusMessage!,
+        //     response.httpVersion,
+        //     responseHeaders,
+        //     bodyString,
+        //     bodySize,
+        //     headersSize,
+        //     bodyBuffer,
+        //     response.timings.phases,
+        //     new HttpRequest(
+        //         options.method!,
+        //         requestUrl,
+        //         HttpClient.normalizeHeaderNames(
+        //             (response as any).request.options.headers as RequestHeaders,
+        //             Object.keys(httpRequest.headers)),
+        //         Buffer.isBuffer(requestBody) ? convertBufferToStream(requestBody) : requestBody,
+        //         httpRequest.rawBody,
+        //         httpRequest.name
+        //     ));
     }
 
     public async clearCookies() {
@@ -126,53 +145,47 @@ export class HttpClient {
 
         const options: OptionsOfBufferResponseBody = {
             headers: clonedHeaders as any as Headers,
-            method: httpRequest.method as any as Method,
+            method: httpRequest.method,
             body: requestBody,
             responseType: 'buffer',
             decompress: true,
             followRedirect: settings.followRedirect,
             throwHttpErrors: false,
-            retry: 0,
-            hooks: {
-                afterResponse: [],
-                beforeRequest: [],
-            },
-            https: {
-                rejectUnauthorized: false
-            }
+            retry: 0
         };
 
         if (settings.timeoutInMilliseconds > 0) {
             options.timeout = settings.timeoutInMilliseconds;
         }
 
-        if (settings.rememberCookiesForSubsequentRequests) {
-            options.cookieJar = new CookieJar(this.cookieStore);
-        }
+        // TODO: do we need the cookieJar?
+        // if (settings.rememberCookiesForSubsequentRequests) {
+        //     options.cookieJar = new CookieJar(this.cookieStore);
+        // }
 
         // TODO: refactor auth
-        const authorization = getHeader(options.headers!, 'Authorization') as string | undefined;
+        const authorization = (options.headers) ? options.headers.get('Authorization') as string | undefined : undefined;
         if (authorization) {
             const [scheme, user, ...args] = authorization.split(/\s+/);
             const normalizedScheme = scheme.toLowerCase();
             if (args.length > 0) {
                 const pass = args.join(' ');
                 if (normalizedScheme === 'basic') {
-                    removeHeader(options.headers!, 'Authorization');
+                    options.headers?.delete('Authorization');
                     options.username = user;
                     options.password = pass;
                 } else if (normalizedScheme === 'digest') {
-                    removeHeader(options.headers!, 'Authorization');
-                    options.hooks!.afterResponse!.push(digest(user, pass));
+                    options.headers?.delete('Authorization');
+                    // options.hooks!.afterResponse!.push(digest(user, pass));
                 } else if (normalizedScheme === 'aws') {
-                    removeHeader(options.headers!, 'Authorization');
-                    options.hooks!.beforeRequest!.push(awsSignature(authorization));
+                    options.headers?.delete('Authorization');
+                    // options.hooks!.beforeRequest!.push(awsSignature(authorization));
                 } else if (normalizedScheme === 'cognito') {
-                    removeHeader(options.headers!, 'Authorization');
-                   options.hooks!.beforeRequest!.push(await awsCognito(authorization));
+                    options.headers?.delete('Authorization');
+                    // options.hooks!.beforeRequest!.push(await awsCognito(authorization));
                 }
             } else if (normalizedScheme === 'basic' && user.includes(':')) {
-                removeHeader(options.headers!, 'Authorization');
+                options.headers?.delete('Authorization');
                 const [username, password] = user.split(':');
                 options.username = username;
                 options.password = password;
@@ -184,21 +197,17 @@ export class HttpClient {
         Object.assign(options, certificate);
 
         // set proxy
-        if (settings.proxy && !HttpClient.ignoreProxy(httpRequest.url, settings.excludeHostsForProxy)) {
-            const proxyEndpoint = url.parse(settings.proxy);
-            if (/^https?:$/.test(proxyEndpoint.protocol || '')) {
-                const proxyOptions = {
-                    host: proxyEndpoint.hostname,
-                    port: Number(proxyEndpoint.port),
-                    rejectUnauthorized: settings.proxyStrictSSL
-                };
+        if (settings.proxy && !HttpClient.ignoreProxy(httpRequest.url, settings.excludeHostsForProxy, settings.noProxy)) {
+            process.env.http_proxy = settings.proxy;
+            process.env.https_proxy = settings.proxy;
+            process.env.HTTP_PROXY = settings.proxy;
+            process.env.HTTPS_PROXY = settings.proxy;
 
-                const ctor = (httpRequest.url.startsWith('http:')
-                    ? await import('http-proxy-agent')
-                    : await import('https-proxy-agent')).default;
+            const bypassList = HttpClient.buildProxyBypassList(settings.excludeHostsForProxy || [], settings.noProxy || []);
+            process.env.no_proxy = bypassList
+            process.env.NO_PROXY = bypassList
 
-                options.agent = new ctor(proxyOptions);
-            }
+            options.agent = new ProxyAgent();
         }
 
         return options;
@@ -224,15 +233,19 @@ export class HttpClient {
         return { cert, key, pfx, passphrase };
     }
 
-    private static ignoreProxy(requestUrl: string, excludeHostsForProxy: string[]): Boolean {
-        if (!excludeHostsForProxy || excludeHostsForProxy.length === 0) {
+    private static ignoreProxy(requestUrl: string, excludeHostsForProxy: string[], noProxy?: string[]): Boolean {
+        const noExcludeHostsForProxy = !excludeHostsForProxy || excludeHostsForProxy.length === 0
+        const noNoProxy = !noProxy || noProxy.length === 0;
+
+        if (noExcludeHostsForProxy === false && noNoProxy === false) {
             return false;
         }
 
         const resolvedUrl = url.parse(requestUrl);
         const hostName = resolvedUrl.hostname?.toLowerCase();
         const port = resolvedUrl.port;
-        const excludeHostsProxyList = Array.from(new Set(excludeHostsForProxy.map(eh => eh.toLowerCase())));
+
+        const excludeHostsProxyList = HttpClient.buildProxyBypassArray(excludeHostsForProxy || [], noProxy || []);
 
         for (const eh of excludeHostsProxyList) {
             const urlParts = eh.split(":");
@@ -251,6 +264,18 @@ export class HttpClient {
         }
 
         return false;
+    }
+
+    private static buildProxyBypassArray(excludeHostsForProxy: string[], noProxy: string[]): string[] {
+        const excludeHostsForProxyList = Array.from(new Set(excludeHostsForProxy.map(eh => eh.toLowerCase())));
+        const noProxyList = Array.from(new Set(noProxy!.map(eh => eh.toLowerCase())));
+        const bypassArray = [...excludeHostsForProxyList, ...noProxyList];
+        return bypassArray;
+    }
+
+    private static buildProxyBypassList(excludeHostsForProxy: string[], noProxy: string[]): string {
+        const bypassArray = HttpClient.buildProxyBypassArray(excludeHostsForProxy, noProxy);
+        return bypassArray.join(',');
     }
 
     private resolveCertificate(absoluteOrRelativePath: string | undefined): Buffer | undefined {

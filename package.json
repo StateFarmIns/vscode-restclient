@@ -24,7 +24,8 @@
     "url": "https://github.com/Huachao/vscode-restclient.git"
   },
   "engines": {
-    "vscode": "^1.81.0"
+    "vscode": "^1.81.0",
+    "node": ">=18.0.0"
   },
   "categories": [
     "Other",
@@ -733,16 +734,14 @@
     "encodeurl": "^1.0.1",
     "filesize": "^3.3.0",
     "fs-extra": "^5.0.0",
-    "got": "^11.8.6",
     "highlight.js": "^10.4.1",
-    "http-proxy-agent": "^2.1.0",
-    "https-proxy-agent": "^2.2.3",
+    "proxy-agent": "^6.5.0",
     "httpsnippet": "^1.22.0",
     "iconv-lite": "^0.4.15",
     "jsonc-parser": "^2.0.2",
     "jsonpath-plus": "^0.20.1",
     "mime-types": "^2.1.14",
-    "node-fetch": "^2.6.7",
+    "node-fetch": "^2.7.0",
     "node-jws": "^0.1.4",
     "open": "^10.1.0",
     "pretty-data": "^0.40.0",
